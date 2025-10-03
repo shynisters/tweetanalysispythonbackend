@@ -1,0 +1,23 @@
+# Virtual Environment
+/venv/
+
+# Python cache
+/__pycache__/
+*.pyc
+
+# IDE and OS specific
+.DS_Store
+.idea/
+.vscode/
+*.swp
+*~
+
+# Jupyter Notebook checkpoints
+.ipynb_checkpoints
+
+# Model artifacts and logs
+*.joblib
+training_log.csv
+
+# NLTK data
+nltk_data/

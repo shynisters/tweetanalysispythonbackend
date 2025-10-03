@@ -1,100 +1,59 @@
-# main.py
+# backend/main.py
 
-# --- Part 1: Imports ---
-# We import the necessary libraries.
-# FastAPI is for creating the web server.
-# Pandas is for loading and managing our data.
-# NLTK is for the sentiment analysis.
+import pandas as pd
+import re
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-import pandas as pd
-from nltk.sentiment.vader import SentimentIntensityAnalyzer
-import re 
+from transformers import pipeline # <-- NEW: Import the Hugging Face pipeline
 
-# --- Part 2: Initial Setup ---
-# This line creates our main web application instance.
+# --- Model Loading ---
+# This loads a model specifically fine-tuned for Aspect-Based Sentiment Analysis.
+# The first time you run this, it will download the model (it may take a few minutes).
+print("Loading Aspect-Based Sentiment Analysis model...")
+sentiment_analyzer = pipeline("text-classification", model="yangheng/deberta-v3-base-absa-v1.1")
+print("Model loaded successfully.")
+
+
+# --- FastAPI App Setup ---
 app = FastAPI()
 
 origins = ["http://localhost:5173"]
-
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=origins,  # Allow origins listed above
+    allow_origins=origins,
     allow_credentials=True,
-    allow_methods=["*"],  # Allow all methods (GET, POST, etc.)
-    allow_headers=["*"],  # Allow all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# This initializes the VADER sentiment analyzer.
-# The first time you use it, you might need to download the lexicon.
-# We did this with the download_nltk.py script.
-analyzer = SentimentIntensityAnalyzer()
-
-# --- Part 3: Data Loading ---
-# We load our dataset. It's important to handle potential errors,
-# like if the file doesn't exist.
+# --- Data Loading ---
 try:
-    # We only load the 'text' column since that's all we need.
-    df = pd.read_csv('Tweets.csv', usecols=['name','text'])
+    df = pd.read_csv('Tweets.csv', usecols=['name', 'text'])
 except FileNotFoundError:
-    print("Error: Tweets.csv not found. Make sure it's in the 'backend' directory.")
-    # If the file isn't found, we exit the program.
+    print("Error: Tweets.csv not found.")
     exit()
 
-# --- Part 4: The Core Sentiment Analysis Function ---
-def analyze_sentiment(text: str) -> str:
+# This is the new sentiment analysis function using our powerful model
+def analyze_sentiment_for_aspect(text, aspect):
     """
-    Analyzes the sentiment of a given text using VADER.
-    Returns 'positive', 'negative', or 'neutral'.
+    Analyzes the sentiment of a text with respect to a specific aspect.
     """
-    # The polarity_scores() method returns a dictionary with scores.
-    scores = analyzer.polarity_scores(text)
-    
-    # The 'compound' score is a single value that summarizes the sentiment.
-    # > 0.05 is generally positive.
-    # < -0.05 is generally negative.
-    # Between -0.05 and 0.05 is neutral.
-    compound_score = scores['compound']
-    
-    if compound_score >= 0.05:
-        return 'positive'
-    elif compound_score <= -0.05:
-        return 'negative'
-    else:
-        return 'neutral'
+    # The model expects the input in a specific format: "[CLS] text [SEP] aspect [SEP]"
+    result = sentiment_analyzer(f"[CLS] {text} [SEP] {aspect} [SEP]")[0]
+    # The model returns 'positive', 'negative', 'neutral'. We'll map it to our format.
+    return result['label'].lower()
 
-# --- Part 5: The API Endpoints ---
-# This is a "decorator" that tells FastAPI that the function below it
-# should handle GET requests to the root URL ("/").
-@app.get("/")
-def read_root():
-    return {"message": "Welcome to the Sentiment Analysis API. Use the /analyze endpoint."}
 
-# This decorator handles GET requests to the "/analyze" URL.
-# In backend/main.py, find and REPLACE the entire analyze_tweets function
-
-# Add this new helper function above your analyze_tweets function
-def get_sentence_with_keyword(text, keyword):
-    # A simple way to split text into sentences
-    sentences = re.split(r'[.!?]', text)
-    for sentence in sentences:
-        # Find the sentence that contains the keyword (case-insensitive)
-        if re.search(rf'\b{re.escape(keyword)}\b', sentence, re.IGNORECASE):
-            return sentence
-    # If no specific sentence is found (e.g., tweet is one sentence), return the whole text
-    return text
-
-# Now, replace your existing analyze_tweets function with this final, most intelligent version
+# --- API Endpoint ---
 @app.get("/analyze")
 def analyze_tweets(query: str):
     """
-    Final version: Uses whole-word matching for search and
-    sentence-level analysis for more accurate sentiment.
+    Final version: Uses a transformer model for true Aspect-Based Sentiment Analysis.
     """
     if not query:
         return {"error": "Query parameter cannot be empty."}
 
-    # 1. Use regex for whole-word matching
+    # Use regex for whole-word matching to find relevant tweets
     filtered_tweets = df[df['text'].fillna('').str.contains(rf'\b{re.escape(query)}\b', case=False, regex=True)]
     
     tweet_sample = filtered_tweets.head(200)
@@ -102,10 +61,8 @@ def analyze_tweets(query: str):
     
     sentiments_for_count = []
     for tweet in tweet_objects:
-        # 2. Analyze sentiment on the relevant sentence, not the whole tweet
-        relevant_text = get_sentence_with_keyword(tweet['text'], query)
-        sentiment = analyze_sentiment(relevant_text)
-        
+        # For each tweet, analyze the sentiment ABOUT our search query
+        sentiment = analyze_sentiment_for_aspect(tweet['text'], query)
         tweet['sentiment'] = sentiment
         sentiments_for_count.append(sentiment)
 
